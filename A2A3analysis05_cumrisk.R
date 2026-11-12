@@ -22,10 +22,12 @@
 ##       シート F_domain / F_iii / M_domain / M_iii（label, Case, sig, Control）と all_numbers
 ##     cumrisk_numeric.xlsx  … 確認用の数値（丸める前の値）
 ##     作業用の図（図番号は付けない）
-##       distribution_main.pdf, distribution_AB.pdf, forest_OR.pdf (+ forest_OR_per_factor / forest_OR_domains),
-##       upset_<解析>.pdf, leave_one_out.pdf
-##     submission/ … 論文投稿用の図（タイトル・注なし、Arial 7–8 pt、Scientific Reports の段組の幅）
-##       Fig3  総リスク数の分布（主解析）               Fig4  1因子あたり OR（A）と5領域の OR（B）
+##       distribution_main.pdf, distribution_AB.pdf, forest_OR_per_factor.pdf（Fig 4）,
+##       forest_OR_domains.pdf（Fig 5 の下段）, upset_<解析>.pdf, leave_one_out.pdf
+##     submission/ … 論文投稿用の図（タイトル・注なし、Arial 7–8 pt、Scientific Reports の段組の幅、
+##                   背景は透明。Illustrator で編集しやすいように）
+##       Fig3  総リスク数の分布（主解析）               Fig4  1因子あたり OR（Model 1・2、感度分析を含む）
+##       Fig5_domain_OR  Fig 5（ベン図）の下段：5領域の 1因子あたり OR（Model 4）
 ##       FigS8 総リスク数の分布（データセット A・B）    FigS9 leave-one-out
 ##       FigS10 5領域の組み合わせ（UpSet プロット、主解析）
 ##       （ragg パッケージがあれば 600 dpi の TIFF も出力）
@@ -36,8 +38,8 @@
 ##   表・補足表の番号は改訂原稿に合わせている
 ##     Table 3  個別因子・領域・下位領域（性別ごと、Fisher）     Table S4  表3のデータセット A・B
 ##     Table 4  総リスク数（線形モデル）                         Table S5  表4の補足（A・B、未調整、負の二項）
-##     Table 5  ロジスティック回帰モデル 1〜5                     Table S6  総リスク数のカテゴリ別の分布と OR
-##                                                              Table S7  解析内の感度分析（図4a の数値）
+##     Table 5  ロジスティック回帰 Model 1〜5（2-7 節）           Table S6  総リスク数のカテゴリ別の分布と OR
+##                                                              Table S7  解析内の感度分析（図4 の数値）
 ##                                                              Table S8  頑健性とモデル3の診断
 ##                                                              Table S10 連続変数の閾値
 ##     （Table 1 参加者の特徴、Table 2 変数一覧、Table S1〜S3 は別に作成）
@@ -145,7 +147,7 @@ D5_LABELS <- c(D1 = "D1 Developmental", D2 = "D2 Neurobiological", D3 = "D3 Non-
                D4 = "D4 Child factors", D5 = "D5 Other hardships")
 
 # 図の設定
-EST_COLORS   <- c(common = "black", F = "#B07800", M = "#009E73")   # 図4a（OR の図）
+EST_COLORS   <- c(common = "black", F = "#B07800", M = "#009E73")   # 図4（OR の図）
 EST_SHAPES   <- c(common = 15,      F = 16,        M = 17)
 EST_LABELS   <- c(common = "Women and men (common)", F = "Women", M = "Men")
 K_COLORS     <- set_names(c("#DCE6F2", "#A9C4E3", "#6F9FD1", "#3B74B5", "#1F4E8C"), K_LABELS)  # 総リスク数の分布の図
@@ -625,23 +627,23 @@ run_analysis <- function(fulldata, an, thr_main = NULL) {
   d5_vars <- str_c("cnt_", unique(itm$d5))
 
   ## ---- 2-3. 表3：個別因子・領域・下位領域（性別ごと Fisher）------------
-  tab2_dat <- scored_items %>%
+  tab3_dat <- scored_items %>%
     select(Gender, case, all_of(itm$var)) %>%
     bind_cols(select(idx, starts_with(c("dom_", "sub_"))))
 
   row_spec  <- make_rows(itm)
   stat_vars <- row_spec$var[!is.na(row_spec$var)]
 
-  stats2 <- expand_grid(Gender = genders, var = stat_vars) %>%
-    mutate(res = map2(Gender, var, ~ fisher_stats(filter(tab2_dat, Gender == .x), .y))) %>%
+  stats3 <- expand_grid(Gender = genders, var = stat_vars) %>%
+    mutate(res = map2(Gender, var, ~ fisher_stats(filter(tab3_dat, Gender == .x), .y))) %>%
     unnest(res) %>%
     mutate(family = if_else(str_detect(var, "^(dom|sub)_"), "summary", "item")) %>%
     mutate(p_adj = adjust_p(p, estimable),
            .by = all_of(c("family", if (FDR_BY_GENDER) "Gender")))
 
   # 表3：男女を縦に並べる（女性のブロック → 男性のブロック）
-  table2 <- map_dfr(genders, function(g) {
-    nn <- tab2_dat %>% filter(Gender == g) %>% count(case)
+  table3 <- map_dfr(genders, function(g) {
+    nn <- tab3_dat %>% filter(Gender == g) %>% count(case)
     head <- tibble(Factor = str_c(sex_name(g),
                                   " (case n = ", nn$n[nn$case == 1],
                                   ", control n = ", nn$n[nn$case == 0], ")"))
@@ -651,7 +653,7 @@ run_analysis <- function(fulldata, an, thr_main = NULL) {
       transmute(var, thr_txt = str_c(sprintf("%.*f", digits, threshold),
                                      if_else(unit == "", "", str_c(" ", unit))))
     body <- row_spec %>%
-      left_join(filter(stats2, Gender == g), by = "var") %>%
+      left_join(filter(stats3, Gender == g), by = "var") %>%
       left_join(thr_g, by = "var") %>%
       arrange(row) %>%
       transmute(
@@ -671,16 +673,16 @@ run_analysis <- function(fulldata, an, thr_main = NULL) {
     mutate(Gender = factor(Gender, levels = genders),
            age_c  = age - mean(age))
 
-  eff3 <- bind_rows(lm_effects(dB, adjust_age = TRUE),
+  eff4 <- bind_rows(lm_effects(dB, adjust_age = TRUE),
                     lm_effects(dB, adjust_age = FALSE))   # 未調整モデルは補足表 S5 に
-  nb3  <- nb_effects(dB)
-  adj3 <- lm_group_means(dB, adjust_age = TRUE)            # 表4の主効果の行に入れる調整済み平均
+  nb4  <- nb_effects(dB)
+  adj4 <- lm_group_means(dB, adjust_age = TRUE)            # 表4の主効果の行に入れる調整済み平均
   adj_txt <- function(g, s = "All") {
-    x <- filter(adj3, Group == g, Gender == s)
+    x <- filter(adj4, Group == g, Gender == s)
     ci_txt(x$adj_mean, x$adj_low, x$adj_high)
   }
 
-  desc3 <- idx %>%
+  desc4 <- idx %>%
     group_by(Gender) %>%
     summarise(case_N = sum(case == 1), case_mean = mean(k[case == 1]), case_sd = sd(k[case == 1]),
               ctrl_N = sum(case == 0), ctrl_mean = mean(k[case == 0]), ctrl_sd = sd(k[case == 0]),
@@ -688,16 +690,16 @@ run_analysis <- function(fulldata, an, thr_main = NULL) {
     arrange(match(Gender, genders))
 
   # 表4：交互作用 → 群の主効果 → 性別ごとの群差 → 群ごとの性差（参考）
-  e3 <- filter(eff3, model == "age-adjusted")
-  row3 <- function(label, e) {
-    x <- filter(e3, effect == e)
+  e4 <- filter(eff4, model == "age-adjusted")
+  row4 <- function(label, e) {
+    x <- filter(e4, effect == e)
     tibble(Comparison = label,
            `Difference [95% CI]` = ci_txt(x$est, x$est_low, x$est_high),
            `d or Δd [95% CI]`    = ci_txt(x$d, x$d_low, x$d_high),
            P                     = p_star(x$p))
   }
-  grp3 <- desc3 %>%
-    left_join(filter(e3, str_detect(effect, "^group difference")) %>%
+  grp4 <- desc4 %>%
+    left_join(filter(e4, str_detect(effect, "^group difference")) %>%
                 mutate(Gender = str_match(effect, "\\((.*)\\)")[, 2]),
               by = "Gender") %>%
     transmute(Comparison            = str_c("  ", sex_name(Gender), " (case n = ", case_N,
@@ -707,16 +709,16 @@ run_analysis <- function(fulldata, an, thr_main = NULL) {
               `Difference [95% CI]` = ci_txt(est, est_low, est_high),
               `d or Δd [95% CI]`    = ci_txt(d, d_low, d_high),
               P                     = p_star(p))
-  table3 <- bind_rows(
-    row3("Group × gender interaction (men − women)", "interaction"),
-    row3("Main effect of group (case − control)", "main effect of group") %>%
+  table4 <- bind_rows(
+    row4("Group × gender interaction (men − women)", "interaction"),
+    row4("Main effect of group (case − control)", "main effect of group") %>%
       mutate(`Case, adjusted mean [95% CI]`    = adj_txt(CASE_GROUP),   # 男女を同じ重みで平均
              `Control, adjusted mean [95% CI]` = adj_txt("CT"), .after = Comparison),
     tibble(Comparison = "Group difference (case − control) by gender"),
-    grp3,
+    grp4,
     tibble(Comparison = "Gender difference (men − women), for reference"),
-    row3("  Control group", "gender difference (CT)"),
-    row3(str_c("  Case group"), str_c("gender difference (", CASE_GROUP, ")"))
+    row4("  Control group", "gender difference (CT)"),
+    row4(str_c("  Case group"), str_c("gender difference (", CASE_GROUP, ")"))
   ) %>%
     select(Comparison, `Case, adjusted mean [95% CI]`, `Control, adjusted mean [95% CI]`,
            `Difference [95% CI]`, `d or Δd [95% CI]`, P)
@@ -734,13 +736,13 @@ run_analysis <- function(fulldata, an, thr_main = NULL) {
                       ~ venn_stats(filter(idx, Gender == .x), venns[[.y]], .y))) %>%
     unnest(res)
 
-  stats2_adj <- stats2 %>% select(Gender, var_A = var, p_adj_A = p_adj)
+  stats3_adj <- stats3 %>% select(Gender, var_A = var, p_adj_A = p_adj)
   venn_long <- venn_long %>%
     mutate(family = if_else(type == "set", "set", "region")) %>%
     mutate(p_adj = adjust_p(p, estimable),
            .by = all_of(c("venn", "family", if (FDR_BY_GENDER) "Gender"))) %>%
     mutate(var_A = coalesce(unname(SET_VAR_ALIAS[var]), var)) %>%
-    left_join(stats2_adj, by = c("Gender", "var_A")) %>%
+    left_join(stats3_adj, by = c("Gender", "var_A")) %>%
     # 円の横の割合（領域・下位領域）は表3の補正後の値を使う
     mutate(p_adj   = if_else(type == "set", p_adj_A, p_adj),
            sig_raw = sig_mark(p),
@@ -770,33 +772,49 @@ run_analysis <- function(fulldata, an, thr_main = NULL) {
                        count_by_group(mutate(.x, k_cat = droplevels(k_cat)), k_cat))),
                      .id = "Gender")
 
-  ## ---- 2-7. モデル1〜5（男女をまとめ、年齢・性別で調整、Firth）--------
+  ## ============================================================
+  ## ---- 2-7. ロジスティック回帰 Model 1〜5（表5、図4・図5の下段）--------
+  ##   目的変数: 事件群かどうか（case）
+  ##   すべて Firth の罰則付き最尤法、男女をまとめ、年齢（age10）と性別（male）で調整
+  ## ============================================================
   dM <- idx %>% filter(!is.na(age10))
   dM_cat <- mutate(dM, k_cat = droplevels(k_cat))
-  f_m4 <- reformulate(c(d5_vars, "age10", "male"), response = "case")
 
-  models <- bind_rows(
-    firth_tab(dM, case ~ k + age10 + male)                %>% mutate(model = "M1 total"),
-    firth_tab(dM, case ~ k * male + age10)                %>% mutate(model = "M2 interaction"),
-    sex_slopes(dM, "k")                                   %>% mutate(model = "M2 sex-specific"),
-    firth_tab(dM, case ~ breadth + age10 + male)          %>% mutate(model = "M3a breadth only"),
-    firth_tab(dM, case ~ k + breadth + age10 + male)      %>% mutate(model = "M3 total + breadth"),
-    firth_tab(dM, f_m4)                                   %>% mutate(model = "M4 domains"),
-    firth_tab(dM, case ~ k + I(k^2) + age10 + male)       %>% mutate(model = "M5 quadratic"),
-    firth_tab(dM_cat, case ~ k_cat + age10 + male)        %>% mutate(model = "M5b categories")
-  ) %>%
+  # ---- Model 1【主解析】：総リスク数 k（1因子あたりの OR）--------------
+  m1 <- firth_tab(dM, case ~ k + age10 + male) %>% mutate(model = "M1 total")
+
+  # ---- Model 2【主解析】：k × 性別の交互作用と、性別ごとの 1因子あたり OR --
+  m2 <- bind_rows(
+    firth_tab(dM, case ~ k * male + age10) %>% mutate(model = "M2 interaction"),
+    sex_slopes(dM, "k")                    %>% mutate(model = "M2 sex-specific"))
+
+  # ---- Model 3：該当領域数（breadth）。単独（3a）と、k と同時（3）--------
+  m3 <- bind_rows(
+    firth_tab(dM, case ~ breadth + age10 + male)     %>% mutate(model = "M3a breadth only"),
+    firth_tab(dM, case ~ k + breadth + age10 + male) %>% mutate(model = "M3 total + breadth"))
+
+  # ---- Model 4（探索的）：5領域の因子数を同時に投入（領域ごとの 1因子あたり OR）--
+  f_m4 <- reformulate(c(d5_vars, "age10", "male"), response = "case")
+  m4 <- firth_tab(dM, f_m4) %>% mutate(model = "M4 domains")
+
+  # ---- Model 5：直線性の確認（2次の項）と、k のカテゴリ（5b、補足表 S6）--
+  m5 <- bind_rows(
+    firth_tab(dM, case ~ k + I(k^2) + age10 + male) %>% mutate(model = "M5 quadratic"),
+    firth_tab(dM_cat, case ~ k_cat + age10 + male)  %>% mutate(model = "M5b categories"))
+
+  models <- bind_rows(m1, m2, m3, m4, m5) %>%
     relocate(model) %>%
     mutate(term = dplyr::recode(term, !!!set_names(D5_LABELS, str_c("cnt_", names(D5_LABELS)))))
 
-  # モデル3の診断：相関・VIF・ブートストラップ
-  diag3 <- bind_rows(
+  # ---- Model 3 の診断：k と breadth の相関・VIF・ブートストラップ（補足表 S8）--
+  diag_m3 <- bind_rows(
     tibble(item = "cor(k, breadth): all",     value = cor(dM$k, dM$breadth)),
     tibble(item = "cor(k, breadth): Control", value = with(filter(dM, case == 0), cor(k, breadth))),
     tibble(item = "cor(k, breadth): Case",    value = with(filter(dM, case == 1), cor(k, breadth))),
     vif_manual(dM, c("k", "breadth", "age10", "male")) %>% transmute(item = str_c("VIF: ", term), value = VIF)
   )
 
-  boot3 <- NULL
+  boot_m3 <- NULL
   if (N_BOOT > 0) {
     set.seed(SEED)
     boot <- map_dfr(seq_len(N_BOOT), function(b) {
@@ -806,7 +824,7 @@ run_analysis <- function(fulldata, an, thr_main = NULL) {
       if (is.null(f)) return(NULL)
       tibble(b = b, term = names(f$coefficients), est = unname(f$coefficients))
     })
-    boot3 <- boot %>%
+    boot_m3 <- boot %>%
       filter(term %in% c("k", "breadth")) %>%
       group_by(term) %>%
       summarise(OR_median = exp(median(est)),
@@ -816,13 +834,15 @@ run_analysis <- function(fulldata, an, thr_main = NULL) {
                 n_boot = n(), .groups = "drop")
   }
 
-  ## ---- 2-8. 頑健性（年齢・性別で調整）---------------------------------
+  ## ---- 2-8. 頑健性：Model 1 の変形（補足表 S8、補足図 S9）----------------
+  # 非血縁関係と、それを除いた残りの総リスク数を同時に投入
   top <- if (TOP_ITEM %in% itm$var) {
     dM %>%
       mutate(k_wo_top = k - .data[[TOP_ITEM]]) %>%
       firth_tab(reformulate(c(TOP_ITEM, "k_wo_top", "age10", "male"), response = "case"))
   } else NULL
 
+  # leave-one-out：因子を1つずつ除いた総リスク数で Model 1 を当てはめ直す
   loo <- map_dfr(itm$var, function(v) {
     dM %>%
       mutate(kk = k - .data[[v]]) %>%
@@ -831,7 +851,8 @@ run_analysis <- function(fulldata, an, thr_main = NULL) {
       mutate(dropped = v, .before = 1)
   })
 
-  ## ---- 2-9. 感度分析（解析内）------------------------------------------
+  ## ---- 2-9. 感度分析：Model 1・2 を別の仕様で（補足表 S7、図4）------------
+  #   閾値（mean + 1 SD、P90）、欠損の扱い、精神疾患の除外、二値化しない得点
   sens <- SENS_SPECS %>%
     pmap_dfr(function(spec, threshold, missing, drop, score) {
       d <- build_index(scored_items, thr, itm, threshold, missing, drop, score) %>%
@@ -850,11 +871,11 @@ run_analysis <- function(fulldata, an, thr_main = NULL) {
     })
 
   list(thr = thr, thr_own = thr_own, N = N_tab, incomplete = incomplete,
-       stats2 = stats2, table2 = table2,
-       eff3 = eff3, nb3 = nb3, desc3 = desc3, adj3 = adj3, table3 = table3,
+       stats3 = stats3, table3 = table3,
+       eff4 = eff4, nb4 = nb4, desc4 = desc4, adj4 = adj4, table4 = table4,
        venn_long = venn_long, venn_sheets = venn_sheets,
        k_table = k_table, trend = trend,
-       models = models, diag3 = diag3, boot3 = boot3, top = top, loo = loo, sens = sens,
+       models = models, diag_m3 = diag_m3, boot_m3 = boot_m3, top = top, loo = loo, sens = sens,
        idx = idx, itm = itm)
 }
 
@@ -894,10 +915,10 @@ out <- function(f) file.path(OUT_DIR, f)
 tables <- list()
 
 ## ---- Table 3：個別因子・領域・下位領域（主解析）---------------------------
-tables$`Table 3` <- results$main$table2
+tables$`Table 3` <- results$main$table3
 
 ## ---- Table 4：総リスク数（主解析、年齢調整モデル）-----------------------
-tables$`Table 4` <- results$main$table3
+tables$`Table 4` <- results$main$table4
 
 ## ---- Table 5：ロジスティック回帰モデル 1〜5（Main / A / B）---------------
 models_all <- collect("models")
@@ -920,17 +941,17 @@ MODEL_ROWS <- tribble(
 ) %>%
   mutate(row = row_number())
 
-t4_body <- expand_grid(MODEL_ROWS, analysis = an_names) %>%
+t5_body <- expand_grid(MODEL_ROWS, analysis = an_names) %>%
   left_join(models_all, by = c("model", "term", "analysis")) %>%
   transmute(row, label, analysis,
             `OR [95% CI]` = if_else(is.na(OR), "–", fmt_or(OR, lower, upper)),
             P = p_num(p))
-t4_n <- models_all %>%
+t5_n <- models_all %>%
   filter(model == "M1 total", term == "k") %>%
   transmute(analysis, `OR [95% CI]` = str_c("n = ", n, " (cases = ", n_case, ")"), P = "") %>%
   mutate(row = 0L, label = "Participants")
 
-tables$`Table 5` <- bind_rows(t4_n, t4_body) %>%
+tables$`Table 5` <- bind_rows(t5_n, t5_body) %>%
   mutate(analysis = factor(analysis, levels = an_names)) %>%
   arrange(row, analysis) %>%
   mutate(analysis = an_short(as.character(analysis))) %>%
@@ -960,7 +981,7 @@ tables$`Table S10` <- collect("thr") %>%
 
 ## ---- Table S4：表3のデータセット A・B -----------------------------------------
 tables$`Table S4` <- map_dfr(setdiff(an_names, "main"), function(an) {
-  bind_rows(tibble(Factor = an_long(an)), results[[an]]$table2)
+  bind_rows(tibble(Factor = an_long(an)), results[[an]]$table3)
 })
 
 ## ---- Table S5：表4の補足（全データセット、年齢調整・未調整、負の二項回帰）----
@@ -976,17 +997,17 @@ eff_label <- function(e) case_when(
 eff_order <- c("interaction", "main effect of group", "group difference (F)", "group difference (M)",
                "gender difference (CT)", str_c("gender difference (", CASE_GROUP, ")"))
 
-eff3_all <- collect("eff3")
-nb3_all  <- collect("nb3")
+eff4_all <- collect("eff4")
+nb4_all  <- collect("nb4")
 
-s7_lm <- eff3_all %>%
+s5_lm <- eff4_all %>%
   transmute(analysis, effect,
             Model = if_else(model == "age-adjusted", "Linear model, age-adjusted", "Linear model, unadjusted"),
             Comparison = eff_label(effect),
             `Estimate [95% CI]` = ci_txt(est, est_low, est_high),
             `d or Δd [95% CI]`  = ci_txt(d, d_low, d_high),
             P = p_star(p), `Standard errors` = vcov)
-s7_nb <- nb3_all %>%
+s5_nb <- nb4_all %>%
   transmute(analysis, effect,
             Model = "Negative binomial, age-adjusted",
             Comparison = case_when(effect == "interaction" ~ "Group × gender interaction (likelihood-ratio test)",
@@ -997,7 +1018,7 @@ s7_nb <- nb3_all %>%
             `d or Δd [95% CI]`  = "",
             P = p_star(p), `Standard errors` = "model-based")
 
-tables$`Table S5` <- bind_rows(s7_lm, s7_nb) %>%
+tables$`Table S5` <- bind_rows(s5_lm, s5_nb) %>%
   mutate(order_m = match(Model, c("Linear model, age-adjusted", "Linear model, unadjusted",
                                   "Negative binomial, age-adjusted")),
          order_e = match(effect, eff_order)) %>%
@@ -1005,7 +1026,7 @@ tables$`Table S5` <- bind_rows(s7_lm, s7_nb) %>%
   transmute(Dataset = an_short(analysis), Model, Comparison,
             `Estimate [95% CI]`, `d or Δd [95% CI]`, P, `Standard errors`)
 
-## ---- Table S7：解析内の感度分析（図4a の数値）--------------------------------
+## ---- Table S7：解析内の感度分析（図4 の数値）--------------------------------
 sens_all <- collect("sens")
 tables$`Table S7` <- sens_all %>%
   mutate(term = dplyr::recode(term, "per factor (common)" = "Common", "per factor (F)" = "Women",
@@ -1029,7 +1050,7 @@ cat_or <- models_all %>%
   filter(model == "M5b categories", str_detect(term, "^k_cat")) %>%
   transmute(analysis, k_cat = str_remove(term, "^k_cat"), OR_txt = ci_txt(OR, lower, upper))
 
-s9_body <- k_all %>%
+s6_body <- k_all %>%
   pivot_longer(c(Case, Control), names_to = "grp", values_to = "n") %>%
   group_by(analysis, Gender, grp) %>%
   mutate(val = np_txt(n, sum(n))) %>%
@@ -1043,34 +1064,34 @@ s9_body <- k_all %>%
   transmute(analysis, Dataset = an_short(analysis), `Number of risk factors` = k_cat,
             `Women, case`, `Women, control`, `Men, case`, `Men, control`,
             `OR [95% CI] (Model 5b)` = OR_txt)
-s9_trend <- trend_all %>%
+s6_trend <- trend_all %>%
   group_by(analysis) %>%
   summarise(`Women, case` = p_num(trend_p[Gender == "F"]),
             `Men, case`   = p_num(trend_p[Gender == "M"]), .groups = "drop") %>%
   transmute(analysis, Dataset = an_short(analysis), `Number of risk factors` = "Trend test (P)",
             `Women, case`, `Men, case`)
-tables$`Table S6` <- bind_rows(s9_body, s9_trend) %>%
+tables$`Table S6` <- bind_rows(s6_body, s6_trend) %>%
   arrange(match(analysis, an_names)) %>%
   select(-analysis)
 
 ## ---- Table S8：頑健性の確認とモデル3の診断 -------------------------------
 top_all  <- collect("top")
-diag_all <- collect("diag3")
-boot_all <- collect("boot3")
+diag_all <- collect("diag_m3")
+boot_all <- collect("boot_m3")
 
-s10_top <- top_all %>%
+s8_top <- top_all %>%
   filter(term %in% c(TOP_ITEM, "k_wo_top")) %>%
   transmute(analysis, Section = "Non-kin relation and the remaining risk count",
             Item  = if_else(term == "k_wo_top", "Risk count excluding non-kin relation (per factor)",
                             "Non-kin relation (present vs absent)"),
             Value = str_c(ci_txt(OR, lower, upper), ", P = ", p_num(p)))
-s10_diag <- diag_all %>%
+s8_diag <- diag_all %>%
   transmute(analysis, Section = "Model 3: collinearity",
             Item  = str_replace_all(item, c("cor\\(k, breadth\\)" = "Correlation (risk count, breadth)",
                                             "VIF: k" = "VIF: risk count", "VIF: breadth" = "VIF: risk breadth",
                                             "VIF: age10" = "VIF: age", "VIF: male" = "VIF: gender")),
             Value = sprintf("%.2f", value))
-s10_boot <- if (nrow(boot_all) > 0) boot_all %>%
+s8_boot <- if (nrow(boot_all) > 0) boot_all %>%
   transmute(analysis, Section = "Model 3: bootstrap",
             Item  = dplyr::recode(term, k = "Risk count (per factor)", breadth = "Risk breadth (per domain)"),
             Value = str_c("median OR ", sprintf("%.2f", OR_median),
@@ -1078,7 +1099,7 @@ s10_boot <- if (nrow(boot_all) > 0) boot_all %>%
                           sprintf("%.2f", OR_97.5), "]; OR > 1 in ",
                           sprintf("%.1f", 100 * prop_OR_above_1), "% of ", n_boot, " replicates")) else NULL
 
-tables$`Table S8` <- bind_rows(s10_top, s10_diag, s10_boot) %>%
+tables$`Table S8` <- bind_rows(s8_top, s8_diag, s8_boot) %>%
   mutate(sec_order = match(Section, c("Non-kin relation and the remaining risk count",
                                       "Model 3: collinearity", "Model 3: bootstrap"))) %>%
   arrange(match(analysis, an_names), sec_order) %>%
@@ -1130,22 +1151,23 @@ plot_distribution <- function(an, title = NULL) {
 }
 
 ggsave(out("distribution_main.pdf"), plot_distribution("main"), width = 6, height = 4.5)
-p_s6 <- plot_distribution("CTonly", an_long("CTonly")) / plot_distribution("bio", an_long("bio")) +
+p_dist_AB <- plot_distribution("CTonly", an_long("CTonly")) / plot_distribution("bio", an_long("bio")) +
   plot_layout(guides = "collect") + plot_annotation(tag_levels = "a")
-ggsave(out("distribution_AB.pdf"), p_s6, width = 6.5, height = 8.5)
+ggsave(out("distribution_AB.pdf"), p_dist_AB, width = 6.5, height = 8.5)
 
-## ---- Fig 4：A 1因子あたり OR（主解析＋感度分析）、B 5領域の OR（モデル4）---
+## ---- Fig 4：1因子あたり OR（Model 1・2、主解析＋感度分析）--------------
+## ---- Fig 5 の下段：5領域の 1因子あたり OR（Model 4）---------------------
 # Main analysis（主解析の主要な仕様）を目立たせる
-#   a: 「Main specification」の行を上に少し離して置き、薄い灰色の帯を敷き、項目名・P 値を太字にする。
-#      点と線も主要な仕様だけ太く大きくし、感度分析の仕様は細く小さく、少し薄くする
-#   b: 主解析（Main）は大きな黒丸と太い線、データセット A・B は小さな灰色の印と細い線
+#   Fig 4: 「Main specification」の行を上に少し離して置き、薄い灰色の帯を敷き、項目名・P 値を太字にする。
+#          点と線も主要な仕様だけ太く大きくし、感度分析の仕様は細く小さく、少し薄くする
+#   Fig 5 の下段: 主解析（Main）は大きな黒丸と太い線、データセット A・B は小さな灰色の印と細い線
 SPEC_GAP <- 0.6                                        # Main specification と他の仕様の間の追加の間隔
 SPEC_Y   <- set_names(c(length(SPEC_LABELS) + SPEC_GAP, rev(seq_len(length(SPEC_LABELS) - 1))),
                       names(SPEC_LABELS))              # 各仕様の y 位置（Main specification が一番上）
 spec_axis_labels <- as.expression(map(names(SPEC_LABELS), function(s)
   if (s == "main") bquote(bold(.(unname(SPEC_LABELS[s])))) else unname(SPEC_LABELS[s])))
 
-est5 <- sens_all %>%
+est_fig4 <- sens_all %>%
   filter(term %in% c("per factor (common)", "per factor (F)", "per factor (M)")) %>%
   mutate(est = dplyr::recode(term, "per factor (common)" = "common",
                              "per factor (F)" = "F", "per factor (M)" = "M"),
@@ -1154,7 +1176,7 @@ est5 <- sens_all %>%
                   case_when(est == "common" ~ 0.25, est == "F" ~ 0, TRUE ~ -0.25),
          analysis_f = factor(an_long(analysis), levels = ANALYSES$long),
          est      = factor(est, levels = names(EST_COLORS)))
-int5 <- sens_all %>%
+int_fig4 <- sens_all %>%
   filter(term == "interaction (M/F ratio)") %>%
   mutate(y          = unname(SPEC_Y[spec]),
          label      = str_c("P = ", p_num(p)),
@@ -1162,18 +1184,18 @@ int5 <- sens_all %>%
          analysis_f = factor(an_long(analysis), levels = ANALYSES$long))
 
 X_MIN <- 1; X_MAX <- 7; X_TXT <- 8.5
-p5a <- ggplot(est5, aes(OR, y, colour = est, shape = est)) +
+p_fig4 <- ggplot(est_fig4, aes(OR, y, colour = est, shape = est)) +
   annotate("rect", xmin = -Inf, xmax = Inf, ymin = SPEC_Y[["main"]] - 0.45,
            ymax = SPEC_Y[["main"]] + 0.45, fill = "grey92") +
   geom_vline(xintercept = 1, linetype = 2, colour = "grey50") +
   # 感度分析の仕様：細い線・小さい点・少し薄く
-  geom_linerange(data = filter(est5, !is_main), aes(xmin = lower, xmax = upper),
+  geom_linerange(data = filter(est_fig4, !is_main), aes(xmin = lower, xmax = upper),
                  linewidth = 0.35, alpha = 0.7) +
-  geom_point(data = filter(est5, !is_main), size = 1.2, alpha = 0.7) +
+  geom_point(data = filter(est_fig4, !is_main), size = 1.2, alpha = 0.7) +
   # 主要な仕様：太い線・大きい点
-  geom_linerange(data = filter(est5, is_main), aes(xmin = lower, xmax = upper), linewidth = 0.6) +
-  geom_point(data = filter(est5, is_main), size = 1.6) +
-  geom_text(data = int5, aes(x = X_TXT, y = y, label = label, fontface = face), inherit.aes = FALSE,
+  geom_linerange(data = filter(est_fig4, is_main), aes(xmin = lower, xmax = upper), linewidth = 0.6) +
+  geom_point(data = filter(est_fig4, is_main), size = 1.6) +
+  geom_text(data = int_fig4, aes(x = X_TXT, y = y, label = label, fontface = face), inherit.aes = FALSE,
             hjust = 0, size = 2.8, colour = "grey20") +
   facet_wrap(~ analysis_f, ncol = 1) +
   scale_x_log10(breaks = c(1, 1.5, 2, 3, 4, 6)) +
@@ -1194,7 +1216,12 @@ p5a <- ggplot(est5, aes(OR, y, colour = est, shape = est)) +
         plot.margin = margin(5, 60, 5, 5))
 
 dom_levels <- unname(D5_LABELS)
-dom5 <- models_all %>%
+# 図の項目名は原稿の領域の記号（(i)、(ii)、(iii-1)〜(iii-3)）で表示する（表5の項目名は変えない）
+DOM_FIG_LABELS <- c(D1 = "(i) Developmental", D2 = "(ii) Neurobiological",
+                    D3 = "(iii-1) Non-kin relation", D4 = "(iii-2) Child factors",
+                    D5 = "(iii-3) Other hardships")
+dom_fig_levels <- unname(DOM_FIG_LABELS[names(D5_LABELS)])
+dom_or <- models_all %>%
   filter(model == "M4 domains", term %in% dom_levels) %>%
   mutate(an_i = match(analysis, an_names),
          y    = length(dom_levels) + 1 - match(term, dom_levels) + (2 - an_i) * 0.25,
@@ -1204,12 +1231,12 @@ DOM_SHAPES <- set_names(c(16, 15, 17), ANALYSES$short)
 DOM_SIZES  <- set_names(c(1.6, 1.1, 1.1), ANALYSES$short)
 DOM_COLS   <- set_names(c("black", "grey50", "grey50"), ANALYSES$short)
 DOM_LWD    <- set_names(c(0.6, 0.35, 0.35), ANALYSES$short)
-p5b <- ggplot(dom5, aes(OR, y, shape = analysis_f, colour = analysis_f)) +
+p_domain_or <- ggplot(dom_or, aes(OR, y, shape = analysis_f, colour = analysis_f)) +
   geom_vline(xintercept = 1, linetype = 2, colour = "grey50") +
   geom_linerange(aes(xmin = lower, xmax = upper, linewidth = analysis_f), show.legend = FALSE) +
   geom_point(aes(size = analysis_f)) +
   scale_x_log10(breaks = c(0.5, 1, 2, 5, 10, 20, 50, 100)) +
-  scale_y_continuous(breaks = seq_along(dom_levels), labels = rev(dom_levels),
+  scale_y_continuous(breaks = seq_along(dom_levels), labels = rev(dom_fig_levels),
                      expand = expansion(add = 0.5)) +
   scale_shape_manual(values = DOM_SHAPES, name = NULL) +
   scale_size_manual(values = DOM_SIZES, name = NULL) +
@@ -1220,11 +1247,8 @@ p5b <- ggplot(dom5, aes(OR, y, shape = analysis_f, colour = analysis_f)) +
   theme(legend.position = "top", panel.grid.minor = element_blank(),
         panel.grid.major.y = element_blank())
 
-ggsave(out("forest_OR_per_factor.pdf"), p5a, width = 9, height = 7)
-ggsave(out("forest_OR_domains.pdf"), p5b, width = 7, height = 3.8)
-ggsave(out("forest_OR.pdf"),
-       p5a / p5b + plot_layout(heights = c(3, 1.1)) + plot_annotation(tag_levels = "a"),
-       width = 9, height = 10)
+ggsave(out("forest_OR_per_factor.pdf"), p_fig4, width = 9, height = 7)        # Fig 4
+ggsave(out("forest_OR_domains.pdf"), p_domain_or, width = 7, height = 3.8)      # Fig 5 の下段
 
 ## ---- 5領域の組み合わせ（UpSet プロット；主解析は Fig S10）--------------------
 upset_plots <- list()   # 投稿用の図を作るために、解析ごとに上段・下段の図を残しておく
@@ -1310,7 +1334,7 @@ m1_all  <- models_all %>% filter(model == "M1 total", term == "k") %>% select(an
 loo_plot <- loo_all %>%
   mutate(Factor     = factor(unname(ITEM_LABELS[dropped]), levels = rev(unname(ITEM_LABELS))),
          analysis_f = factor(an_long(analysis), levels = ANALYSES$long))
-p_s8 <- ggplot(loo_plot, aes(OR, Factor)) +
+p_loo <- ggplot(loo_plot, aes(OR, Factor)) +
   geom_vline(xintercept = 1, linetype = 2, colour = "grey50") +
   geom_vline(data = mutate(m1_all, analysis_f = factor(an_long(analysis), levels = ANALYSES$long)),
              aes(xintercept = OR_m1), colour = "grey60") +
@@ -1323,7 +1347,7 @@ p_s8 <- ggplot(loo_plot, aes(OR, Factor)) +
        y = "Factor removed") +
   theme_bw() +
   theme(panel.grid.minor = element_blank(), panel.grid.major.y = element_blank())
-ggsave(out("leave_one_out.pdf"), p_s8, width = 10, height = 6)
+ggsave(out("leave_one_out.pdf"), p_loo, width = 10, height = 6)
 
 
 ## ---- 論文投稿用の図（Scientific Reports）--------------------------------------
@@ -1338,14 +1362,22 @@ FIG_LABEL_MM <- 2.2    # 図の中の数字（geom_text、mm 単位。2.2 mm ≈
 dir.create(SUB_DIR, recursive = TRUE, showWarnings = FALSE)
 
 # PDF の出力装置：Mac は quartz（Arial を定義して使う）、それ以外は cairo_pdf
+#   背景は透明（Illustrator で編集しやすいように）
 if (Sys.info()[["sysname"]] == "Darwin") {
   quartzFonts(Arial = c("ArialMT", "Arial-BoldMT", "Arial-ItalicMT", "Arial-BoldItalicMT"))
-  sub_pdf <- function(filename, width, height, ...)
-    grDevices::quartz(type = "pdf", file = filename, width = width, height = height, family = FIG_FONT)
+  sub_pdf <- function(filename, width, height, bg = "transparent", ...)
+    grDevices::quartz(type = "pdf", file = filename, width = width, height = height,
+                      family = FIG_FONT, bg = bg)
 } else {
-  sub_pdf <- function(filename, width, height, ...)
-    grDevices::cairo_pdf(filename, width = width, height = height, family = FIG_FONT)
+  sub_pdf <- function(filename, width, height, bg = "transparent", ...)
+    grDevices::cairo_pdf(filename, width = width, height = height, family = FIG_FONT, bg = bg)
 }
+
+# 背景を透明にする設定（図全体・パネル・凡例）。パネルの枠線や帯の色は残す
+transparent <- element_rect(fill = "transparent", colour = NA)
+bg_none <- theme(plot.background = transparent, panel.background = transparent,
+                 legend.background = transparent, legend.box.background = transparent,
+                 legend.key = transparent)
 
 # 1つの ggplot の文字を投稿用にそろえる（タイトル・注を消し、geom_text の大きさも変える）
 to_submission <- function(p, label_mm = FIG_LABEL_MM) {
@@ -1361,15 +1393,19 @@ to_submission <- function(p, label_mm = FIG_LABEL_MM) {
           strip.text   = element_text(size = FIG_FONT_PT),
           legend.text  = element_text(size = FIG_FONT_PT),
           legend.title = element_text(size = FIG_FONT_PT),
-          plot.margin  = margin(1.5, 2, 1.5, 1.5, unit = "mm"))
+          plot.margin  = margin(1.5, 2, 1.5, 1.5, unit = "mm")) +
+    bg_none
 }
 
 save_submission <- function(p, name, width_mm, height_mm) {
+  # patchwork でまとめた図は、全体の背景も透明にする
+  if (inherits(p, "patchwork")) p <- p + plot_annotation(theme = theme(plot.background = transparent))
   ggsave(file.path(SUB_DIR, str_c(name, ".pdf")), p, device = sub_pdf,
-         width = width_mm / 25.4, height = height_mm / 25.4)
+         width = width_mm / 25.4, height = height_mm / 25.4, bg = "transparent")
   if (requireNamespace("ragg", quietly = TRUE))
     ggsave(file.path(SUB_DIR, str_c(name, ".tiff")), p, device = ragg::agg_tiff,
-           width = width_mm, height = height_mm, units = "mm", dpi = 600, compression = "lzw")
+           width = width_mm, height = height_mm, units = "mm", dpi = 600, compression = "lzw",
+           bg = "transparent")
   message("投稿用の図: ", file.path(SUB_DIR, name), " (", width_mm, " × ", height_mm, " mm)")
 }
 # パネル記号（A, B）は太字 8 pt
@@ -1378,12 +1414,29 @@ tag_theme <- theme(plot.tag = element_text(family = FIG_FONT, size = 8, face = "
 # Fig 3：総リスク数の分布（主解析）。1.5 段幅
 save_submission(to_submission(plot_distribution("main")), "Fig3", width_mm = 120, height_mm = 80)
 
-# Fig 4：A 1因子あたり OR（主解析と感度分析）、B 5領域の OR（モデル4）。2 段幅
-#   A の右の P 値（交互作用）の説明は figure legend に書く
-fig4 <- (to_submission(p5a) + theme(plot.margin = margin(1.5, 14, 1.5, 1.5, unit = "mm"))) /
-  to_submission(p5b) +
-  plot_layout(heights = c(3, 1.1)) + plot_annotation(tag_levels = "a") & tag_theme
-save_submission(fig4, "Fig4", width_mm = 183, height_mm = 210)
+# Fig 4：1因子あたり OR（Model 1・2、主解析と感度分析）。2 段幅
+#   右の P 値（交互作用）の説明は figure legend に書く
+fig4 <- to_submission(p_fig4) + theme(plot.margin = margin(1.5, 14, 1.5, 1.5, unit = "mm"))
+save_submission(fig4, "Fig4", width_mm = 183, height_mm = 155)
+
+# Fig 5 の下段：5領域の 1因子あたり OR（Model 4）。ベン図（Illustrator で作成）の下に置く
+#   幅はベン図に合わせて調整する（ここでは 2 段幅）
+#   凡例は白い背景・細い枠線の箱に入れ、プロットの内側の右下に置く
+legend_inside_br <- if (packageVersion("ggplot2") >= "3.5.0") {
+  theme(legend.position = "inside", legend.position.inside = c(0.99, 0.03),
+        legend.justification = c(1, 0))
+} else {
+  theme(legend.position = c(0.99, 0.03), legend.justification = c(1, 0))
+}
+fig5_domain <- to_submission(p_domain_or) +
+  legend_inside_br +
+  theme(legend.direction  = "vertical",
+        legend.background = element_rect(fill = "white", colour = "grey30", linewidth = 0.3),
+        legend.key        = element_rect(fill = "white", colour = NA),
+        legend.margin     = margin(1, 2, 1, 1.5, unit = "mm"),
+        legend.key.height = unit(3, "mm"),
+        legend.spacing.y  = unit(0, "mm"))
+save_submission(fig5_domain, "Fig5_domain_OR", width_mm = 183, height_mm = 60)
 
 # Fig S8：総リスク数の分布（データセット A・B）。パネルの見出しは消し、A・B の記号で示す
 figS8 <- to_submission(plot_distribution("CTonly")) / to_submission(plot_distribution("bio")) +
@@ -1391,7 +1444,7 @@ figS8 <- to_submission(plot_distribution("CTonly")) / to_submission(plot_distrib
 save_submission(figS8, "FigS8", width_mm = 120, height_mm = 150)
 
 # Fig S9：leave-one-out（Main・A・B）。2 段幅
-save_submission(to_submission(p_s8), "FigS9", width_mm = 183, height_mm = 110)
+save_submission(to_submission(p_loo), "FigS9", width_mm = 183, height_mm = 110)
 
 # Fig S10：5領域の組み合わせ（UpSet プロット、主解析）。2 段幅
 #   上段の棒の上の人数は 1.8 mm（約 5 pt）、下段の点は少し小さくする
@@ -1411,11 +1464,11 @@ save_submission(figS10, "FigS10", width_mm = 183, height_mm = 150)
 fig_sheets <- list(
   `Distribution values`    = dist_values("main") %>% mutate(Gender = sex_name(Gender)),
   `OR values`              = bind_rows(
-    est5 %>% transmute(Panel = "A", Dataset = an_short(analysis), Specification = SPEC_LABELS[spec],
+    est_fig4 %>% transmute(Panel = "Fig 4", Dataset = an_short(analysis), Specification = SPEC_LABELS[spec],
                        Estimate = as.character(EST_LABELS[as.character(est)]), OR, lower, upper, p),
-    int5 %>% transmute(Panel = "A", Dataset = an_short(analysis), Specification = SPEC_LABELS[spec],
+    int_fig4 %>% transmute(Panel = "Fig 4", Dataset = an_short(analysis), Specification = SPEC_LABELS[spec],
                        Estimate = "Interaction (men/women)", OR, lower, upper, p),
-    dom5 %>% transmute(Panel = "B", Dataset = an_short(analysis), Specification = "Model 4",
+    dom_or %>% transmute(Panel = "Fig 5 (domains, Model 4)", Dataset = an_short(analysis), Specification = "Model 4",
                        Estimate = term, OR, lower, upper, p)),
   `Distribution AB values` = bind_rows(dist_values("CTonly"), dist_values("bio")) %>%
     mutate(Dataset = an_short(analysis), Gender = sex_name(Gender), .before = 1) %>% select(-analysis),
@@ -1433,7 +1486,7 @@ checks <- bind_rows(
     transmute(Dataset = an_short(analysis), Item = str_c(sex_name(Gender), ", ",
                                                          if_else(Group == CASE_GROUP, "case", "control")),
               Value = str_c("N = ", N, "; participants with any missing factor or age = ", n_incomplete)),
-  eff3_all %>% distinct(analysis, model, vcov) %>%
+  eff4_all %>% distinct(analysis, model, vcov) %>%
     transmute(Dataset = an_short(analysis), Item = str_c("Table 4 / S5 standard errors (", model, ")"),
               Value = vcov)
 ) %>%
@@ -1540,11 +1593,11 @@ iwalk(results, function(res, an) {
 
 # 確認用の数値（丸める前の値）
 write_xlsx(list(
-  `Table 3 numeric`  = collect("stats2"),
-  `Table 4 lm`       = eff3_all,
-  `Table 4 nb`       = nb3_all,
-  `Table 4 desc`     = collect("desc3"),
-  `Table 4 adj mean` = collect("adj3"),
+  `Table 3 numeric`  = collect("stats3"),
+  `Table 4 lm`       = eff4_all,
+  `Table 4 nb`       = nb4_all,
+  `Table 4 desc`     = collect("desc4"),
+  `Table 4 adj mean` = collect("adj4"),
   `Models`           = models_all,
   `Sensitivity`      = sens_all,
   `Leave-one-out`    = loo_all,
